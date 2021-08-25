@@ -8,6 +8,75 @@ from tqdm import tqdm
 import time
 
 
+def make_maml_batch(domains, read_domain, n_trj, len_trj, t_steps, K):
+    x_support = []
+    a_support = []
+    y_support = []
+    x_query = []
+    a_query = []
+    y_query = []
+
+    for domain in domains:
+        x, x1, a = read_domain(domain)
+
+        x_s = np.reshape(x[:K], (K * (len_trj - t_steps + 1), -1))
+        x1_s = np.reshape(x1[:K], (K * (len_trj - t_steps + 1), -1))
+        a_s = np.reshape(a[:K], (K * (len_trj - t_steps + 1), -1))
+        x_q = np.reshape(x[K:], ((n_trj - K) * (len_trj - t_steps + 1), -1))
+        x1_q = np.reshape(x1[K:], ((n_trj - K) * (len_trj - t_steps + 1), -1))
+        a_q = np.reshape(a[K:], ((n_trj - K) * (len_trj - t_steps + 1), -1))
+
+        idx = list(range(x_s.shape[0]))
+        np.random.shuffle(idx)
+
+        x_support.append(np.expand_dims(x_s[idx], 0))
+        y_support.append(np.expand_dims(x1_s[idx], 0))
+        a_support.append(np.expand_dims(a_s[idx], 0))
+
+        idx = list(range(x_q.shape[0]))
+        np.random.shuffle(idx)
+
+        x_query.append(np.expand_dims(x_q[idx], 0))
+        y_query.append(np.expand_dims(x1_q[idx], 0))
+        a_query.append(np.expand_dims(a_q[idx], 0))
+
+    x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
+    a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
+    y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
+    x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
+    a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
+    y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
+
+    return x_support, a_support, y_support, x_query, a_query, y_query
+
+
+def make_non_maml_batch(domains, read_domain, n_trj, len_trj, t_steps):
+    x_data = []
+    a_data = []
+    y_data = []
+
+    for domain in domains:
+        x, x1, a = read_domain(domain)
+
+        x_s = np.reshape(x, (n_trj * (len_trj - t_steps + 1), -1))
+        x1_s = np.reshape(x1, (n_trj * (len_trj - t_steps + 1), -1))
+        a_s = np.reshape(a, (n_trj * (len_trj - t_steps + 1), -1))
+
+        idx = list(range(x_s.shape[0]))
+        np.random.shuffle(idx)
+
+        x_data.append(np.expand_dims(x_s[idx], 0))
+        y_data.append(np.expand_dims(x1_s[idx], 0))
+        a_data.append(np.expand_dims(a_s[idx], 0))
+
+    # todo: load numpy not torch?
+    x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
+    a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
+    y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
+
+    return x_data, a_data, y_data
+
+
 def euler_yaw_z_from_quaternion(quat):
     x = quat[0]
     y = quat[1]
@@ -35,8 +104,8 @@ class PushingDataset(Dataset):
         self.n_trj = 500
         self.len_trj = 20  # 21 steps, 20 to predict
 
-        self.data_dir = '/local_storage/users/areichlin/Robert_meta_learn/meta_learn'
-        #self.data_dir = './meta_learn'
+        # self.data_dir = '/local_storage/users/areichlin/Robert_meta_learn/meta_learn2_clean'
+        self.data_dir = './meta_learn2_clean'
 
         self.subset_values = []
         self.subset_training_data = []
@@ -90,71 +159,77 @@ class PushingDataset(Dataset):
 
         if self.maml == 0:
             for indeces in [self.subset_training_data, self.subset_test_data]:
-                x_data = []
-                a_data = []
-                y_data = []
 
-                for domain in indeces:
-                    x, x1, a = self.read_domain(domain)
+                x_data, a_data, y_data = make_non_maml_batch(indeces, self.read_domain, self.n_trj, self.len_trj, self.t_steps)
 
-                    x_s = np.reshape(x, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
-                    x1_s = np.reshape(x1, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
-                    a_s = np.reshape(a, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
-
-                    idx = list(range(x_s.shape[0]))
-                    np.random.shuffle(idx)
-
-                    x_data.append(np.expand_dims(x_s[idx], 0))
-                    y_data.append(np.expand_dims(x1_s[idx], 0))
-                    a_data.append(np.expand_dims(a_s[idx], 0))
-
-                # todo: load numpy not torch?
-                x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
-                a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
-                y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
+                # x_data = []
+                # a_data = []
+                # y_data = []
+                #
+                # for domain in indeces:
+                #     x, x1, a = self.read_domain(domain)
+                #
+                #     x_s = np.reshape(x, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+                #     x1_s = np.reshape(x1, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+                #     a_s = np.reshape(a, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+                #
+                #     idx = list(range(x_s.shape[0]))
+                #     np.random.shuffle(idx)
+                #
+                #     x_data.append(np.expand_dims(x_s[idx], 0))
+                #     y_data.append(np.expand_dims(x1_s[idx], 0))
+                #     a_data.append(np.expand_dims(a_s[idx], 0))
+                #
+                # # todo: load numpy not torch?
+                # x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
+                # a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
+                # y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
 
                 self.subset_values.append({'x': x_data, 'a': a_data, 'y': y_data})
 
 
         else:
             for indeces in [self.subset_training_data, self.subset_test_data]:
-                x_support = []
-                a_support = []
-                y_support = []
-                x_query = []
-                a_query = []
-                y_query = []
 
-                for domain in indeces:
-                    x, x1, a = self.read_domain(domain)
+                x_support, a_support, y_support, x_query, a_query, y_query = make_maml_batch(indeces, self.read_domain, self.n_trj, self.len_trj, self.t_steps, K)
 
-                    x_s = np.reshape(x[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-                    x1_s = np.reshape(x1[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-                    a_s = np.reshape(a[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-                    x_q = np.reshape(x[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
-                    x1_q = np.reshape(x1[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
-                    a_q = np.reshape(a[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
-
-                    idx = list(range(x_s.shape[0]))
-                    np.random.shuffle(idx)
-
-                    x_support.append(np.expand_dims(x_s[idx], 0))
-                    y_support.append(np.expand_dims(x1_s[idx], 0))
-                    a_support.append(np.expand_dims(a_s[idx], 0))
-
-                    idx = list(range(x_q.shape[0]))
-                    np.random.shuffle(idx)
-
-                    x_query.append(np.expand_dims(x_q[idx], 0))
-                    y_query.append(np.expand_dims(x1_q[idx], 0))
-                    a_query.append(np.expand_dims(a_q[idx], 0))
-
-                x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
-                y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
-                a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
-                x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
-                y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
-                a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
+                # x_support = []
+                # a_support = []
+                # y_support = []
+                # x_query = []
+                # a_query = []
+                # y_query = []
+                #
+                # for domain in indeces:
+                #     x, x1, a = self.read_domain(domain)
+                #
+                #     x_s = np.reshape(x[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+                #     x1_s = np.reshape(x1[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+                #     a_s = np.reshape(a[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+                #     x_q = np.reshape(x[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
+                #     x1_q = np.reshape(x1[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
+                #     a_q = np.reshape(a[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
+                #
+                #     idx = list(range(x_s.shape[0]))
+                #     np.random.shuffle(idx)
+                #
+                #     x_support.append(np.expand_dims(x_s[idx], 0))
+                #     y_support.append(np.expand_dims(x1_s[idx], 0))
+                #     a_support.append(np.expand_dims(a_s[idx], 0))
+                #
+                #     idx = list(range(x_q.shape[0]))
+                #     np.random.shuffle(idx)
+                #
+                #     x_query.append(np.expand_dims(x_q[idx], 0))
+                #     y_query.append(np.expand_dims(x1_q[idx], 0))
+                #     a_query.append(np.expand_dims(a_q[idx], 0))
+                #
+                # x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
+                # y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
+                # a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
+                # x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
+                # y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
+                # a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
 
                 self.subset_values.append({'x_s': x_support, 'a_s': a_support, 'y_s': y_support, 'x_q': x_query, 'a_q': a_query, 'y_q': y_query})
 
@@ -178,7 +253,7 @@ class PushingDataset(Dataset):
             x = self.subset_values[mode_idx]['x'][task_sims]
             y = self.subset_values[mode_idx]['y'][task_sims]
             a = self.subset_values[mode_idx]['a'][task_sims]
-            return x, y, a, None, None, None
+            return x, a, y, None, None, None
         else:
             x_s = self.subset_values[mode_idx]['x_s'][task_sims]
             y_s = self.subset_values[mode_idx]['y_s'][task_sims]
@@ -186,7 +261,7 @@ class PushingDataset(Dataset):
             x_q = self.subset_values[mode_idx]['x_q'][task_sims]
             y_q = self.subset_values[mode_idx]['y_q'][task_sims]
             a_q = self.subset_values[mode_idx]['a_q'][task_sims]
-            return x_s, y_s, a_s, x_q, y_q, a_q
+            return x_s, a_s, y_s, x_q, a_q, y_q
 
     def get_batch(self, mode, N, K):
 
@@ -202,70 +277,74 @@ class PushingDataset(Dataset):
 
         if self.maml == 0:
 
-            x_data = []
-            a_data = []
-            y_data = []
+            x_data, a_data, y_data = make_non_maml_batch(task_sims, self.read_domain, self.n_trj, self.len_trj, self.t_steps)
 
-            for sim in task_sims:
-                x, x1, a = self.read_domain(sim)
+            # x_data = []
+            # a_data = []
+            # y_data = []
+            #
+            # for sim in task_sims:
+            #     x, x1, a = self.read_domain(sim)
+            #
+            #     x_s = np.reshape(x, (self.n_trj * (self.len_trj-self.t_steps+1), -1))
+            #     x1_s = np.reshape(x1, (self.n_trj * (self.len_trj-self.t_steps+1), -1))
+            #     a_s = np.reshape(a, (self.n_trj * (self.len_trj-self.t_steps+1), -1))
+            #
+            #     idx = list(range(x_s.shape[0]))
+            #     np.random.shuffle(idx)
+            #
+            #     x_data.append(np.expand_dims(x_s[idx], 0))
+            #     y_data.append(np.expand_dims(x1_s[idx], 0))
+            #     a_data.append(np.expand_dims(a_s[idx], 0))
+            #
+            # x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
+            # a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
+            # y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
 
-                x_s = np.reshape(x, (self.n_trj * (self.len_trj-self.t_steps+1), -1))
-                x1_s = np.reshape(x1, (self.n_trj * (self.len_trj-self.t_steps+1), -1))
-                a_s = np.reshape(a, (self.n_trj * (self.len_trj-self.t_steps+1), -1))
+            return x_data, a_data, y_data, None, None, None
 
-                idx = list(range(x_s.shape[0]))
-                np.random.shuffle(idx)
+        x_support, a_support, y_support, x_query, a_query, y_query = make_maml_batch(task_sims, self.read_domain, self.n_trj, self.len_trj, self.t_steps, K)
 
-                x_data.append(np.expand_dims(x_s[idx], 0))
-                y_data.append(np.expand_dims(x1_s[idx], 0))
-                a_data.append(np.expand_dims(a_s[idx], 0))
+        # x_support = []
+        # a_support = []
+        # y_support = []
+        # x_query = []
+        # a_query = []
+        # y_query = []
+        #
+        # for sim in task_sims:
+        #
+        #     x, x1, a = self.read_domain(sim)
+        #
+        #     x_s = np.reshape(x[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+        #     x1_s = np.reshape(x1[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+        #     a_s = np.reshape(a[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+        #     x_q = np.reshape(x[K:], ((self.n_trj-K) * (self.len_trj - self.t_steps + 1), -1))
+        #     x1_q = np.reshape(x1[K:], ((self.n_trj-K) * (self.len_trj - self.t_steps + 1), -1))
+        #     a_q = np.reshape(a[K:], ((self.n_trj-K) * (self.len_trj - self.t_steps + 1), -1))
+        #
+        #     idx = list(range(x_s.shape[0]))
+        #     np.random.shuffle(idx)
+        #
+        #     x_support.append(np.expand_dims(x_s[idx], 0))
+        #     y_support.append(np.expand_dims(x1_s[idx], 0))
+        #     a_support.append(np.expand_dims(a_s[idx], 0))
+        #
+        #     idx = list(range(x_q.shape[0]))
+        #     np.random.shuffle(idx)
+        #
+        #     x_query.append(np.expand_dims(x_q[idx], 0))
+        #     y_query.append(np.expand_dims(x1_q[idx], 0))
+        #     a_query.append(np.expand_dims(a_q[idx], 0))
+        #
+        # x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
+        # y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
+        # a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
+        # x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
+        # y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
+        # a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
 
-            x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
-            a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
-            y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
-
-            return x_data, y_data, a_data, None, None, None
-
-        x_support = []
-        a_support = []
-        y_support = []
-        x_query = []
-        a_query = []
-        y_query = []
-
-        for sim in task_sims:
-
-            x, x1, a = self.read_domain(sim)
-
-            x_s = np.reshape(x[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-            x1_s = np.reshape(x1[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-            a_s = np.reshape(a[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-            x_q = np.reshape(x[K:], ((self.n_trj-K) * (self.len_trj - self.t_steps + 1), -1))
-            x1_q = np.reshape(x1[K:], ((self.n_trj-K) * (self.len_trj - self.t_steps + 1), -1))
-            a_q = np.reshape(a[K:], ((self.n_trj-K) * (self.len_trj - self.t_steps + 1), -1))
-
-            idx = list(range(x_s.shape[0]))
-            np.random.shuffle(idx)
-
-            x_support.append(np.expand_dims(x_s[idx], 0))
-            y_support.append(np.expand_dims(x1_s[idx], 0))
-            a_support.append(np.expand_dims(a_s[idx], 0))
-
-            idx = list(range(x_q.shape[0]))
-            np.random.shuffle(idx)
-
-            x_query.append(np.expand_dims(x_q[idx], 0))
-            y_query.append(np.expand_dims(x1_q[idx], 0))
-            a_query.append(np.expand_dims(a_q[idx], 0))
-
-        x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
-        y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
-        a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
-        x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
-        y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
-        a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
-
-        return x_support, y_support, a_support, x_query, y_query, a_query
+        return x_support, a_support, y_support, x_query, a_query, y_query
 
     def get_domain(self, K):
 
@@ -277,60 +356,64 @@ class PushingDataset(Dataset):
 
         if self.maml == 0:
 
-            x_data = []
-            a_data = []
-            y_data = []
+            x_data, a_data, y_data = make_non_maml_batch(task_sims, self.read_domain, self.n_trj, self.len_trj, self.t_steps)
 
-            for sim in task_sims:
-                x, x1, a = self.read_domain(sim)
+            # x_data = []
+            # a_data = []
+            # y_data = []
+            #
+            # for sim in task_sims:
+            #     x, x1, a = self.read_domain(sim)
+            #
+            #     x_s = np.reshape(x, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+            #     x1_s = np.reshape(x1, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+            #     a_s = np.reshape(a, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+            #
+            #     x_data.append(np.expand_dims(x_s, 0))
+            #     y_data.append(np.expand_dims(x1_s, 0))
+            #     a_data.append(np.expand_dims(a_s, 0))
+            #
+            # x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
+            # a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
+            # y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
 
-                x_s = np.reshape(x, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
-                x1_s = np.reshape(x1, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
-                a_s = np.reshape(a, (self.n_trj * (self.len_trj - self.t_steps + 1), -1))
+            return x_data, a_data, y_data, None, None, None
 
-                x_data.append(np.expand_dims(x_s, 0))
-                y_data.append(np.expand_dims(x1_s, 0))
-                a_data.append(np.expand_dims(a_s, 0))
+        x_support, a_support, y_support, x_query, a_query, y_query = make_maml_batch(task_sims, self.read_domain, self.n_trj, self.len_trj, self.t_steps, K)
 
-            x_data = torch.from_numpy(np.concatenate(x_data, 0)).float()
-            a_data = torch.from_numpy(np.concatenate(a_data, 0)).float()
-            y_data = torch.from_numpy(np.concatenate(y_data, 0)).float()
+        # x_support = []
+        # a_support = []
+        # y_support = []
+        # x_query = []
+        # a_query = []
+        # y_query = []
+        #
+        # for sim in task_sims:
+        #     x, x1, a = self.read_domain(sim)
+        #
+        #     x_s = np.reshape(x[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+        #     x1_s = np.reshape(x1[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+        #     a_s = np.reshape(a[:K], (K * (self.len_trj - self.t_steps + 1), -1))
+        #     x_q = np.reshape(x[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
+        #     x1_q = np.reshape(x1[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
+        #     a_q = np.reshape(a[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
+        #
+        #     x_support.append(np.expand_dims(x_s, 0))
+        #     y_support.append(np.expand_dims(x1_s, 0))
+        #     a_support.append(np.expand_dims(a_s, 0))
+        #
+        #     x_query.append(np.expand_dims(x_q, 0))
+        #     y_query.append(np.expand_dims(x1_q, 0))
+        #     a_query.append(np.expand_dims(a_q, 0))
+        #
+        # x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
+        # y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
+        # a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
+        # x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
+        # y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
+        # a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
 
-            return x_data, y_data, a_data, None, None, None
-
-        x_support = []
-        a_support = []
-        y_support = []
-        x_query = []
-        a_query = []
-        y_query = []
-
-        for sim in task_sims:
-            x, x1, a = self.read_domain(sim)
-
-            x_s = np.reshape(x[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-            x1_s = np.reshape(x1[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-            a_s = np.reshape(a[:K], (K * (self.len_trj - self.t_steps + 1), -1))
-            x_q = np.reshape(x[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
-            x1_q = np.reshape(x1[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
-            a_q = np.reshape(a[K:], ((self.n_trj - K) * (self.len_trj - self.t_steps + 1), -1))
-
-            x_support.append(np.expand_dims(x_s, 0))
-            y_support.append(np.expand_dims(x1_s, 0))
-            a_support.append(np.expand_dims(a_s, 0))
-
-            x_query.append(np.expand_dims(x_q, 0))
-            y_query.append(np.expand_dims(x1_q, 0))
-            a_query.append(np.expand_dims(a_q, 0))
-
-        x_support = torch.from_numpy(np.concatenate(x_support, 0)).float()
-        y_support = torch.from_numpy(np.concatenate(y_support, 0)).float()
-        a_support = torch.from_numpy(np.concatenate(a_support, 0)).float()
-        x_query = torch.from_numpy(np.concatenate(x_query, 0)).float()
-        y_query = torch.from_numpy(np.concatenate(y_query, 0)).float()
-        a_query = torch.from_numpy(np.concatenate(a_query, 0)).float()
-
-        return x_support, y_support, a_support, x_query, y_query, a_query
+        return x_support, a_support, y_support, x_query, a_query, y_query
 
     def read_domain(self, folder):
 

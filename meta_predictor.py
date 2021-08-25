@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class MamlParams(nn.Module):
-    def __init__(self, n_actions, n_neurons, n_layers, subset, dlo_only):
+    def __init__(self, n_actions, n_neurons, n_layers, subset, dlo_only, lr):
         super(MamlParams, self).__init__()
 
         if subset == 0:
@@ -43,7 +43,7 @@ class MamlParams(nn.Module):
 
         # self.max_pool = nn.MaxPool2d(2)
 
-        # self.lr = nn.ParameterList([nn.Parameter(torch.tensor(lr))] * len(self.theta_shapes))
+        self.lr = nn.ParameterList([nn.Parameter(torch.tensor(lr))] * len(self.theta_shapes))
 
         self.theta_0 = nn.ParameterList([nn.Parameter(torch.zeros(t_size)) for t_size in self.theta_shapes])
         for i in range(len(self.theta_0)):
@@ -85,13 +85,19 @@ class maml(nn.Module):
 
         super(maml, self).__init__()
 
-        self.inner_lr = 0.1
+        self.inner_lr = 1.0
         self.dlo_only = params['dlo_only']
+        self.adapt_lr = params['learned_lr']
 
         # TODO: ???
         # self.gradient_steps = params['gradient_steps']
 
-        self.model_theta = MamlParams(params['t_steps'], params['n_neurons'], params['n_layers'], params['subset'], params['dlo_only'])
+
+
+        self.model_theta = MamlParams(params['t_steps'], params['n_neurons'], params['n_layers'], params['subset'], params['dlo_only'], self.inner_lr)
+
+        self.log_grads_idx = 0
+        self.grads_vals = np.zeros(len(self.model_theta.get_theta()))
 
     def adapt(self, x, a, y, train=False):
 
@@ -100,9 +106,17 @@ class maml(nn.Module):
         L, _ = self.get_loss(x, a, y)
         theta_grad_s = torch.autograd.grad(outputs=L, inputs=theta_i, create_graph=True)
         if train:
-            theta_i = list(map(lambda p: p[1] - self.inner_lr * p[0], zip(theta_grad_s, theta_i)))
+            if self.adapt_lr == 1:
+                theta_i = list(map(lambda p: p[1] - p[2] * p[0], zip(theta_grad_s, theta_i, self.model_theta.lr)))
+            else:
+                theta_i = list(map(lambda p: p[1] - self.inner_lr * p[0], zip(theta_grad_s, theta_i)))
+            for i, grad in enumerate(theta_grad_s):
+                self.grads_vals[i] += torch.mean(torch.abs(grad))
         else:
-            theta_i = list(map(lambda p: p[1] - self.inner_lr * p[0].detach(), zip(theta_grad_s, theta_i)))
+            if self.adapt_lr == 1:
+                theta_i = list(map(lambda p: p[1] - p[2].detach() * p[0].detach(), zip(theta_grad_s, theta_i, self.model_theta.lr)))
+            else:
+                theta_i = list(map(lambda p: p[1] - self.inner_lr * p[0].detach(), zip(theta_grad_s, theta_i)))
 
         return theta_i, L.detach().cpu().item()
 

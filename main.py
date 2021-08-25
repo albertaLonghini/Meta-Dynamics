@@ -13,8 +13,9 @@ import time
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--maml', default=1, type=int, help="use meta learning")
+parser.add_argument('--learned_lr', default=1, type=int, help="0:constant inner learning rate, 1: lr per layer as a meta learned parameter")
 
-parser.add_argument('--t_steps', default=4, type=int, help="predict t steps in the future")
+parser.add_argument('--t_steps', default=2, type=int, help="predict t steps in the future")
 parser.add_argument('--n_neurons', default=128, type=int, help="number of neurons in hidden layers")
 parser.add_argument('--n_layers', default=1, type=int, help="0: 4 hidden layers, 1: 6 hidden layers")
 
@@ -44,6 +45,7 @@ def main(params, dataloader, device):
         log_name = './log_dlo/'
     log_name += 'subset=' + str(params['subset'])
     log_name += '_maml=' + str(params['maml'])
+    log_name += '_adapt_lr=' + str(params['learned_lr'])
     log_name += '_t_steps=' + str(params['t_steps'])
     log_name += '_neurons=' + str(params['n_neurons'])
     log_name += '_layers=' + str(params['n_layers'])
@@ -51,6 +53,8 @@ def main(params, dataloader, device):
     log_name += '_K=' + str(params['K'])
     log_name += '_lr=' + str(params['lr'])
     log_name += '_split=' + str(params['test_split'])
+
+    # log_name = './debug'
     writer = SummaryWriter(log_dir=log_name)
 
     optimizer = optim.Adam(model.parameters(), lr=params['lr'])
@@ -60,9 +64,9 @@ def main(params, dataloader, device):
 
     train_errs = np.zeros(4)
 
-    for epoch in range(params['epochs']):
+    for epoch in tqdm(range(params['epochs'])):
 
-        x_s, y_s, a_s, x_q, y_q, a_q = dataloader.get_batch('train', params['N'], params['K'])
+        x_s, a_s, y_s, x_q, a_q, y_q = dataloader.get_batch('train', params['N'], params['K'])
         x_s, a_s, y_s = x_s.to(device), a_s.to(device), y_s.to(device)
         if params['maml'] == 1:
             x_q, a_q, y_q = x_q.to(device), a_q.to(device), y_q.to(device)
@@ -97,7 +101,7 @@ def main(params, dataloader, device):
         L_train += L_tot
 
         if epoch % params['epochs_test'] == params['epochs_test']-1:
-            x_s, y_s, a_s, x_q, y_q, a_q = dataloader.get_batch('test', params['N'], params['K'])
+            x_s, a_s, y_s, x_q, a_q, y_q = dataloader.get_batch('test', params['N'], params['K'])
             x_s, a_s, y_s = x_s.to(device), a_s.to(device), y_s.to(device)
             if params['maml'] == 1:
                 x_q, a_q, y_q = x_q.to(device), a_q.to(device), y_q.to(device)
@@ -120,6 +124,12 @@ def main(params, dataloader, device):
             writer.add_scalar("L_train", L_train / (params['N']*params['epochs_test']), int(epoch / params['epochs_test']))
             writer.add_scalar("L_inner_train", L_inner / (params['N'] * params['epochs_test']), int(epoch / params['epochs_test']))
 
+            if params['maml'] == 1:
+                for j, grad in enumerate(model.grads_vals):
+                    writer.add_scalar('params_grad_' + str(j), grad / (params['N'] * params['epochs_test']), model.log_grads_idx)
+                model.grads_vals *= 0
+                model.log_grads_idx += 1
+
             if params['dlo_only'] == 0:
                 for log_idx, name in enumerate(['push_err', 'dlo_err', 'obj_pos_err', 'obj_or_err']):
                     writer.add_scalar(name + "_train", train_errs[log_idx] / (params['N'] * params['epochs_test']), int(epoch / params['epochs_test']))
@@ -129,16 +139,19 @@ def main(params, dataloader, device):
             L_inner = 0
             train_errs = np.zeros(4)
 
-        if epoch % 5000 == 4999:
-        #if epoch % 5000 == 0:
-            x_s, y_s, a_s, x_q, y_q, a_q = dataloader.get_domain(params['K'])
+        if epoch % 10000 == 9999:
+            x_s, a_s, y_s, x_q, a_q, y_q = dataloader.get_domain(params['K'])
             if params['maml'] == 1:
+                y_hat_prior = model.model_theta.forward(x_q[0].to(device), a_q[0].to(device))
+                y_hat_prior = y_hat_prior[-10:].detach().cpu().numpy()
                 theta_i, _ = model.adapt(x_s[0].to(device), a_s[0].to(device), y_s[0].to(device), train=False)
                 y_hat = model.model_theta.forward(x_q[0].to(device), a_q[0].to(device), theta_i)
                 y = y_q[0, -10:].detach().cpu().numpy()
+                x = x_q[0, -10:].detach().cpu().numpy()
             else:
                 y_hat = model.model_theta.forward(x_s[0].to(device), a_s[0].to(device))
                 y = y_s[0, -10:].detach().cpu().numpy()
+                x = x_s[0, -10:].detach().cpu().numpy()
 
             y_hat = y_hat[-10:].detach().cpu().numpy()
 
@@ -146,20 +159,28 @@ def main(params, dataloader, device):
 
             if params['dlo_only'] == 0:
                 fig = plt.figure()
-                plt.plot(y[t, 0], y[t, 1], 'bo', alpha=0.3)
-                plt.plot(y_hat[t, 0], y_hat[t, 1], 'bo')
+                plt.plot(x[t, 0], x[t, 1], 'bo', alpha=0.3)
+                plt.plot(y[t, 0], y[t, 1], 'bo')
+                plt.plot(y_hat[t, 0], y_hat[t, 1], 'bs')
                 for dlo in range(32):
-                    plt.plot(y[t, dlo * 2 + 2], y[t, dlo * 2 + 3], 'ro', alpha=0.3)
-                    plt.plot(y_hat[t, dlo * 2 + 2], y_hat[t, dlo * 2 + 3], 'ro')
+                    plt.plot(x[t, dlo * 2 + 2], x[t, dlo * 2 + 3], 'ro', alpha=0.3)
+                    plt.plot(y[t, dlo * 2 + 2], y[t, dlo * 2 + 3], 'ro')
+                    plt.plot(y_hat[t, dlo * 2 + 2], y_hat[t, dlo * 2 + 3], 'rs')
                 for obj in range(3):
-                    plt.plot(y[t, obj * 2 + 66], y[t, obj * 2 + 67], c='blue', alpha=0.3)
-                    plt.plot(y_hat[t, obj * 2 + 66], y_hat[t, obj * 2 + 67], c='blue')
+                    plt.plot(x[t, obj * 2 + 66], x[t, obj * 2 + 67], 'go', alpha=0.3)
+                    plt.plot(y[t, obj * 2 + 66], y[t, obj * 2 + 67], 'go')
+                    plt.plot(y_hat[t, obj * 2 + 66], y_hat[t, obj * 2 + 67], 'gs')
             else:
                 fig = plt.figure()
+                plt.plot(x[t, 0], x[t, 1], 'bo')
                 for dlo in range(32):
-                    plt.plot(y[t, dlo * 2], y[t, dlo * 2 + 1], 'ro', alpha=0.3)
-                    plt.plot(y_hat[t, dlo * 2], y_hat[t, dlo * 2 + 1], 'ro')
-            writer.add_figure("pred", fig, int(epoch / 5000))
+                    plt.plot(x[t, dlo * 2 + 2], x[t, dlo * 2 + 3], 'ro', alpha=0.3)
+                    plt.plot(y[t, dlo * 2], y[t, dlo * 2 + 1], 'ro')
+                    plt.plot(y_hat[t, dlo * 2], y_hat[t, dlo * 2 + 1], 'rs')
+                    # TODO: extend to all non dlo_only also?
+                    if params['maml'] == 1:
+                        plt.plot(y_hat_prior[t, dlo * 2], y_hat_prior[t, dlo * 2 + 1], 'rs', alpha=0.3)
+            writer.add_figure("pred", fig, int(epoch / 10000))
 
             print()
 
@@ -180,3 +201,36 @@ if __name__ == '__main__':
     dataloader = PushingDataset(params['test_split'], params['maml'], params['K'], params['t_steps'], params['subset'], params['dlo_only'])
 
     main(params, dataloader, device)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
