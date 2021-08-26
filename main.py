@@ -14,22 +14,25 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--maml', default=1, type=int, help="use meta learning")
 parser.add_argument('--learned_lr', default=1, type=int, help="0:constant inner learning rate, 1: lr per layer as a meta learned parameter")
+parser.add_argument('--inner_n_steps', default=1, type=int, help="number of inner adaptation steps")
 
-parser.add_argument('--t_steps', default=2, type=int, help="predict t steps in the future")
-parser.add_argument('--n_neurons', default=128, type=int, help="number of neurons in hidden layers")
+parser.add_argument('--t_steps', default=4, type=int, help="predict t steps in the future")
+parser.add_argument('--n_neurons', default=32, type=int, help="number of neurons in hidden layers")
 parser.add_argument('--n_layers', default=1, type=int, help="0: 4 hidden layers, 1: 6 hidden layers")
 
 parser.add_argument('--subset', default=1, type=int, help="0: use full dataset, 1: use all objects domains")
 
 parser.add_argument('--dlo_only', default=1, type=int, help="0: predict all the objects, 1: predict only deformable linear object")
+parser.add_argument('--obj_only', default=0, type=int, help="0: predict all the objects, 1: predict only rigid objects")
+parser.add_argument('--obj_input', default=0, type=int, help='0: remove obj form input when prediction is dlo:1 and restrict to 0 objects')
 
-parser.add_argument('--epochs', default=200000, type=int, help="number of epochs")
-parser.add_argument('--N', default=10, type=int, help="number of tasks per batch")
-parser.add_argument('--K', default=10, type=int, help="number of adapatation trajectories per task")
+parser.add_argument('--epochs', default=1000000, type=int, help="number of epochs")
+parser.add_argument('--N', default=50, type=int, help="number of tasks per batch")
+parser.add_argument('--K', default=50, type=int, help="number of adapatation trajectories per task")
 parser.add_argument('--test_split', default=0.1, type=float, help="ratio of test data")
 parser.add_argument('--seed', default=1234, type=int, help="seed")
 parser.add_argument('--lr', default=0.0001, type=float, help="learning rate")
-parser.add_argument('--epochs_test', default=10, type=int, help="number of epochs before testing")
+parser.add_argument('--epochs_test', default=100, type=int, help="number of epochs before testing")
 
 
 def main(params, dataloader, device):
@@ -52,10 +55,12 @@ def main(params, dataloader, device):
     log_name += '_N=' + str(params['N'])
     log_name += '_K=' + str(params['K'])
     log_name += '_lr=' + str(params['lr'])
-    log_name += '_split=' + str(params['test_split'])
+    log_name += '_split=' + str(params['test_split']) + "_last_a_new_data"
 
-    # log_name = './debug'
+    log_name = './log_dlo/final_code'#last_run_inner_steps='+str(params['inner_n_steps'])+"_reshuffle2"
     writer = SummaryWriter(log_dir=log_name)
+
+    save_model_path = "./models/"+log_name+".pt"
 
     optimizer = optim.Adam(model.parameters(), lr=params['lr'])
 
@@ -65,6 +70,9 @@ def main(params, dataloader, device):
     train_errs = np.zeros(4)
 
     for epoch in tqdm(range(params['epochs'])):
+
+        if epoch == 999990:
+            print()
 
         x_s, a_s, y_s, x_q, a_q, y_q = dataloader.get_batch('train', params['N'], params['K'])
         x_s, a_s, y_s = x_s.to(device), a_s.to(device), y_s.to(device)
@@ -91,7 +99,7 @@ def main(params, dataloader, device):
                 L, errs = model.get_loss(x_s[i], a_s[i], y_s[i])
 
             L_tot += L
-            if params['dlo_only'] == 0:
+            if params['dlo_only'] == 0 and params['obj_only'] == 0:
                 train_errs += errs
 
         optimizer.zero_grad()
@@ -109,7 +117,7 @@ def main(params, dataloader, device):
             L_test = 0
             L_inner_test = 0
             test_errs = np.zeros(4)
-            for i in range(params['N']):
+            for i in range(x_s.shape[0]):
                 if params['maml'] == 1:
                     theta_i, loss_inner = model.adapt(x_s[i], a_s[i], y_s[i], train=False)
                     L, errs = model.get_loss(x_q[i], a_q[i], y_q[i], theta_i)
@@ -117,7 +125,7 @@ def main(params, dataloader, device):
                 else:
                     L, errs = model.get_loss(x_s[i], a_s[i], y_s[i])
                 L_test += L
-                if params['dlo_only'] == 0:
+                if params['dlo_only'] == 0 and params['obj_only'] == 0:
                     test_errs += errs
             writer.add_scalar("L_test", L_test/params['N'], int(epoch / params['epochs_test']))
             writer.add_scalar("L_inner_test", L_inner_test / params['N'], int(epoch / params['epochs_test']))
@@ -130,7 +138,7 @@ def main(params, dataloader, device):
                 model.grads_vals *= 0
                 model.log_grads_idx += 1
 
-            if params['dlo_only'] == 0:
+            if params['dlo_only'] == 0 and params['obj_only'] == 0:
                 for log_idx, name in enumerate(['push_err', 'dlo_err', 'obj_pos_err', 'obj_or_err']):
                     writer.add_scalar(name + "_train", train_errs[log_idx] / (params['N'] * params['epochs_test']), int(epoch / params['epochs_test']))
                     writer.add_scalar(name + "_test", test_errs[log_idx] / (params['N']), int(epoch / params['epochs_test']))
@@ -157,7 +165,7 @@ def main(params, dataloader, device):
 
             t = 5
 
-            if params['dlo_only'] == 0:
+            if params['dlo_only'] == 0 and params['obj_only'] == 0:
                 fig = plt.figure()
                 plt.plot(x[t, 0], x[t, 1], 'bo', alpha=0.3)
                 plt.plot(y[t, 0], y[t, 1], 'bo')
@@ -173,8 +181,14 @@ def main(params, dataloader, device):
             else:
                 fig = plt.figure()
                 plt.plot(x[t, 0], x[t, 1], 'bo')
-                for dlo in range(32):
-                    plt.plot(x[t, dlo * 2 + 2], x[t, dlo * 2 + 3], 'ro', alpha=0.3)
+                if params['dlo_only'] == 1:
+                    segments = 32
+                    offset = 2
+                else:
+                    segments = 3
+                    offset = 2 + 32 * 2
+                for dlo in range(segments):
+                    plt.plot(x[t, dlo * 2 + offset], x[t, dlo * 2 + offset + 1], 'ro', alpha=0.3)
                     plt.plot(y[t, dlo * 2], y[t, dlo * 2 + 1], 'ro')
                     plt.plot(y_hat[t, dlo * 2], y_hat[t, dlo * 2 + 1], 'rs')
                     # TODO: extend to all non dlo_only also?
@@ -182,7 +196,7 @@ def main(params, dataloader, device):
                         plt.plot(y_hat_prior[t, dlo * 2], y_hat_prior[t, dlo * 2 + 1], 'rs', alpha=0.3)
             writer.add_figure("pred", fig, int(epoch / 10000))
 
-            print()
+            torch.save(model, save_model_path)
 
     writer.close()
 
@@ -197,15 +211,13 @@ if __name__ == '__main__':
     torch.manual_seed(seed)
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cpu')
+    if params['dlo_only'] == params['obj_only']:
+        raise Exception('Cannot predict jus objects and just rope at the same time man...')
 
-    dataloader = PushingDataset(params['test_split'], params['maml'], params['K'], params['t_steps'], params['subset'], params['dlo_only'])
+    dataloader = PushingDataset(params)
 
     main(params, dataloader, device)
-
-
-
-
-
 
 
 

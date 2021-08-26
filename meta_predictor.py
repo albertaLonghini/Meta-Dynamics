@@ -5,8 +5,16 @@ import torch.nn.functional as F
 
 
 class MamlParams(nn.Module):
-    def __init__(self, n_actions, n_neurons, n_layers, subset, dlo_only, lr):
+    def __init__(self, params, lr):
         super(MamlParams, self).__init__()
+
+        n_actions = params['t_steps']
+        n_neurons = params['n_neurons']
+        n_layers = params['n_layers']
+        subset = params['subset']
+        dlo_only = params['dlo_only']
+        obj_only = params['obj_only']
+        obj_input = params['obj_input']
 
         if subset == 0:
             in_dim = 117
@@ -15,31 +23,36 @@ class MamlParams(nn.Module):
 
         if dlo_only == 1:
             out_dim = 32*2
+            if obj_input == 0:
+                in_dim = 66
         else:
-            out_dim = 78
+            if obj_only == 1:
+                out_dim = 3 * 2
+            else:
+                out_dim = 78
 
         self.n_layers = n_layers
 
         if n_layers == 0:
 
-            self.theta_shapes = [[n_neurons, in_dim], [n_neurons],
+            self.theta_shapes = [[n_neurons, in_dim+(n_actions*2)], [n_neurons],
                                  [n_neurons, n_neurons], [n_neurons],
-                                 [n_neurons, n_neurons+(n_actions*2)], [n_neurons],
+                                 [n_neurons, n_neurons], [n_neurons],
                                  [out_dim, n_neurons], [out_dim]]
 
         else:
 
-            self.theta_shapes = [[n_neurons, in_dim], [n_neurons],
+            self.theta_shapes = [[n_neurons, in_dim+(n_actions*2)], [n_neurons],
                                  [n_neurons, n_neurons], [n_neurons],
                                  [n_neurons, n_neurons], [n_neurons],
-                                 [n_neurons, n_neurons + (n_actions * 2)], [n_neurons],
+                                 [n_neurons, n_neurons], [n_neurons],
                                  [n_neurons, n_neurons], [n_neurons],
                                  [out_dim, n_neurons], [out_dim]]
 
-        # self.batch_norm1 = nn.BatchNorm2d(self.filters, track_running_stats=False)
-        # self.batch_norm2 = nn.BatchNorm2d(self.filters, track_running_stats=False)
-        # self.batch_norm3 = nn.BatchNorm2d(self.filters, track_running_stats=False)
-        # self.batch_norm4 = nn.BatchNorm2d(self.filters, track_running_stats=False)
+        # self.batch_norm1 = nn.BatchNorm1d(n_neurons, track_running_stats=False)
+        # self.batch_norm2 = nn.BatchNorm1d(n_neurons, track_running_stats=False)
+        # self.batch_norm3 = nn.BatchNorm1d(n_neurons, track_running_stats=False)
+        # self.batch_norm4 = nn.BatchNorm1d(n_neurons, track_running_stats=False)
 
         # self.max_pool = nn.MaxPool2d(2)
 
@@ -60,18 +73,20 @@ class MamlParams(nn.Module):
 
         if self.n_layers == 0:
 
+            x = torch.cat([x, a], -1)
+
             h = F.leaky_relu(F.linear(x, theta[0], bias=theta[1]))
             h = F.leaky_relu(F.linear(h, theta[2], bias=theta[3]))
-            h = torch.cat([h, a], -1)
             h = F.leaky_relu(F.linear(h, theta[4], bias=theta[5]))
             y = F.linear(h, theta[6], bias=theta[7])
 
         else:
 
+            x = torch.cat([x, a], -1)
+
             h = F.leaky_relu(F.linear(x, theta[0], bias=theta[1]))
             h = F.leaky_relu(F.linear(h, theta[2], bias=theta[3]))
             h = F.leaky_relu(F.linear(h, theta[4], bias=theta[5]))
-            h = torch.cat([h, a], -1)
             h = F.leaky_relu(F.linear(h, theta[6], bias=theta[7]))
             h = F.leaky_relu(F.linear(h, theta[8], bias=theta[9]))
             y = F.linear(h, theta[10], bias=theta[11])
@@ -87,14 +102,13 @@ class maml(nn.Module):
 
         self.inner_lr = 1.0
         self.dlo_only = params['dlo_only']
+        self.obj_only = params['obj_only']
+        self.obj_input = params['obj_input']
         self.adapt_lr = params['learned_lr']
 
-        # TODO: ???
-        # self.gradient_steps = params['gradient_steps']
+        self.gradient_steps = params['inner_n_steps']
 
-
-
-        self.model_theta = MamlParams(params['t_steps'], params['n_neurons'], params['n_layers'], params['subset'], params['dlo_only'], self.inner_lr)
+        self.model_theta = MamlParams(params, self.inner_lr)
 
         self.log_grads_idx = 0
         self.grads_vals = np.zeros(len(self.model_theta.get_theta()))
@@ -103,7 +117,18 @@ class maml(nn.Module):
 
         theta_i = self.model_theta.get_theta()
 
-        L, _ = self.get_loss(x, a, y)
+        for _ in range(self.gradient_steps-1):
+            L, _ = self.get_loss(x, a, y, theta_i)
+            theta_grad_s = torch.autograd.grad(outputs=L, inputs=theta_i, create_graph=True)
+            if self.adapt_lr == 1:
+                theta_i = list(map(lambda p: p[1] - p[2] * p[0], zip(theta_grad_s, theta_i, self.model_theta.lr)))
+            else:
+                theta_i = list(map(lambda p: p[1] - self.inner_lr * p[0], zip(theta_grad_s, theta_i)))
+            if train:
+                for i, grad in enumerate(theta_grad_s):
+                    self.grads_vals[i] += torch.mean(torch.abs(grad))
+
+        L, _ = self.get_loss(x, a, y, theta_i)
         theta_grad_s = torch.autograd.grad(outputs=L, inputs=theta_i, create_graph=True)
         if train:
             if self.adapt_lr == 1:
@@ -124,9 +149,11 @@ class maml(nn.Module):
 
         y_hat = self.model_theta.forward(x, a, theta_i)
 
+        # TODO: displacement ???
+
         err = (y - y_hat)**2
 
-        if self.dlo_only == 1:
+        if self.dlo_only == 1 or self.obj_only == 1:
             return torch.mean(err), None
         else:
             push_err = torch.mean(err[:, :2]).detach().cpu().item()
