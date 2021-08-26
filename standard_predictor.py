@@ -5,8 +5,16 @@ import torch.nn.functional as F
 
 
 class Network(nn.Module):
-    def __init__(self, n_actions, n_neurons, n_layers, subset, dlo_only):
+    def __init__(self, params):
         super(Network, self).__init__()
+
+        n_actions = params['t_steps']
+        n_neurons = params['n_neurons']
+        n_layers = params['n_layers']
+        subset = params['subset']
+        dlo_only = params['dlo_only']
+        obj_only = params['obj_only']
+        obj_input = params['obj_input']
 
         if subset == 0:
             in_dim = 117
@@ -15,8 +23,13 @@ class Network(nn.Module):
 
         if dlo_only == 1:
             out_dim = 32 * 2
+            if obj_input == 0:
+                in_dim = 66
         else:
-            out_dim = 78
+            if obj_only == 1:
+                out_dim = 3*2
+            else:
+                out_dim = 78
 
         if n_layers == 0:
 
@@ -69,8 +82,9 @@ class regressor(nn.Module):
         super(regressor, self).__init__()
 
         self.dlo_only = params['dlo_only']
+        self.obj_only = params['obj_only']
 
-        self.model_theta = Network(params['t_steps'], params['n_neurons'], params['n_layers'], params['subset'], params['dlo_only'])
+        self.model_theta = Network(params)
 
     def get_loss(self, x, a, y):
 
@@ -78,7 +92,7 @@ class regressor(nn.Module):
 
         err = (y - y_hat) ** 2
 
-        if self.dlo_only == 1:
+        if self.dlo_only == 1 or self.obj_only == 1:
             return torch.mean(err), None
         else:
             push_err = torch.mean(err[:, :2]).detach().cpu().item()

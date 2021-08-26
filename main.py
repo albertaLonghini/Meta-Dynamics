@@ -16,19 +16,21 @@ parser.add_argument('--maml', default=1, type=int, help="use meta learning")
 parser.add_argument('--learned_lr', default=1, type=int, help="0:constant inner learning rate, 1: lr per layer as a meta learned parameter")
 
 parser.add_argument('--t_steps', default=2, type=int, help="predict t steps in the future")
-parser.add_argument('--n_neurons', default=128, type=int, help="number of neurons in hidden layers")
-parser.add_argument('--n_layers', default=1, type=int, help="0: 4 hidden layers, 1: 6 hidden layers")
+parser.add_argument('--n_neurons', default=32, type=int, help="number of neurons in hidden layers")
+parser.add_argument('--n_layers', default=0, type=int, help="0: 4 hidden layers, 1: 6 hidden layers")
 
 parser.add_argument('--subset', default=1, type=int, help="0: use full dataset, 1: use all objects domains")
 
-parser.add_argument('--dlo_only', default=1, type=int, help="0: predict all the objects, 1: predict only deformable linear object")
+parser.add_argument('--dlo_only', default=0, type=int, help="0: predict all the objects, 1: predict only deformable linear object")
+parser.add_argument('--obj_only', default=1, type=int, help="0: predict all the objects, 1: predict only rigid objects")
+parser.add_argument('--obj_input', default=0, type=int, help='0: remove obj form input when prediction is dlo:1 and restrict to 0 objects')
 
 parser.add_argument('--epochs', default=200000, type=int, help="number of epochs")
-parser.add_argument('--N', default=10, type=int, help="number of tasks per batch")
-parser.add_argument('--K', default=10, type=int, help="number of adapatation trajectories per task")
-parser.add_argument('--test_split', default=0.1, type=float, help="ratio of test data")
+parser.add_argument('--N', default=5, type=int, help="number of tasks per batch")
+parser.add_argument('--K', default=100, type=int, help="number of adapatation trajectories per task")
+parser.add_argument('--test_split', default=0.2, type=float, help="ratio of test data")
 parser.add_argument('--seed', default=1234, type=int, help="seed")
-parser.add_argument('--lr', default=0.0001, type=float, help="learning rate")
+parser.add_argument('--lr', default=0.001, type=float, help="learning rate")
 parser.add_argument('--epochs_test', default=10, type=int, help="number of epochs before testing")
 
 
@@ -43,16 +45,17 @@ def main(params, dataloader, device):
     log_name = './log_gridsearch/'
     if params['dlo_only'] == 1:
         log_name = './log_dlo/'
-    log_name += 'subset=' + str(params['subset'])
-    log_name += '_maml=' + str(params['maml'])
-    log_name += '_adapt_lr=' + str(params['learned_lr'])
-    log_name += '_t_steps=' + str(params['t_steps'])
-    log_name += '_neurons=' + str(params['n_neurons'])
-    log_name += '_layers=' + str(params['n_layers'])
-    log_name += '_N=' + str(params['N'])
-    log_name += '_K=' + str(params['K'])
-    log_name += '_lr=' + str(params['lr'])
-    log_name += '_split=' + str(params['test_split'])
+    # log_name += 'subset=' + str(params['subset'])
+    # log_name += '_maml=' + str(params['maml'])
+    # log_name += '_adapt_lr=' + str(params['learned_lr'])
+    # log_name += '_t_steps=' + str(params['t_steps'])
+    # log_name += '_neurons=' + str(params['n_neurons'])
+    # log_name += '_layers=' + str(params['n_layers'])
+    # log_name += '_N=' + str(params['N'])
+    # log_name += '_K=' + str(params['K'])
+    # log_name += '_lr=' + str(params['lr'])
+    # log_name += '_split=' + str(params['test_split'])
+    log_name += 'CPU_TEST_Data1_smaller_subset_none_maml_LR=0.001_NN=32_layer=0_N=5_K=100_OBJ'
 
     # log_name = './debug'
     writer = SummaryWriter(log_dir=log_name)
@@ -91,7 +94,7 @@ def main(params, dataloader, device):
                 L, errs = model.get_loss(x_s[i], a_s[i], y_s[i])
 
             L_tot += L
-            if params['dlo_only'] == 0:
+            if params['dlo_only'] == 0 and params['obj_only'] == 0:
                 train_errs += errs
 
         optimizer.zero_grad()
@@ -117,7 +120,7 @@ def main(params, dataloader, device):
                 else:
                     L, errs = model.get_loss(x_s[i], a_s[i], y_s[i])
                 L_test += L
-                if params['dlo_only'] == 0:
+                if params['dlo_only'] == 0 and params['obj_only'] == 0:
                     test_errs += errs
             writer.add_scalar("L_test", L_test/params['N'], int(epoch / params['epochs_test']))
             writer.add_scalar("L_inner_test", L_inner_test / params['N'], int(epoch / params['epochs_test']))
@@ -157,7 +160,7 @@ def main(params, dataloader, device):
 
             t = 5
 
-            if params['dlo_only'] == 0:
+            if params['dlo_only'] == 0 and params['obj_only'] == 0:
                 fig = plt.figure()
                 plt.plot(x[t, 0], x[t, 1], 'bo', alpha=0.3)
                 plt.plot(y[t, 0], y[t, 1], 'bo')
@@ -173,8 +176,15 @@ def main(params, dataloader, device):
             else:
                 fig = plt.figure()
                 plt.plot(x[t, 0], x[t, 1], 'bo')
-                for dlo in range(32):
-                    plt.plot(x[t, dlo * 2 + 2], x[t, dlo * 2 + 3], 'ro', alpha=0.3)
+                if params['dlo_only'] == 1:
+                    segments = 32
+                    offset = 2
+                else:
+                    segments = 3
+                    offset = 2 + 32*2
+
+                for dlo in range(segments):
+                    plt.plot(x[t, dlo * 2 + offset], x[t, dlo * 2 + offset + 1], 'ro', alpha=0.3)
                     plt.plot(y[t, dlo * 2], y[t, dlo * 2 + 1], 'ro')
                     plt.plot(y_hat[t, dlo * 2], y_hat[t, dlo * 2 + 1], 'rs')
                     # TODO: extend to all non dlo_only also?
@@ -197,8 +207,20 @@ if __name__ == '__main__':
     torch.manual_seed(seed)
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
 
-    dataloader = PushingDataset(params['test_split'], params['maml'], params['K'], params['t_steps'], params['subset'], params['dlo_only'])
+    if params['dlo_only'] == params['obj_only']:
+        raise Exception('Cannot predict jus objects and just rope at the same time man...')
+
+    # check that N is big enough
+    tot_domains = 3*3*25    # valid for only deformable predictions and entrire prediction
+    if params['obj_only'] == 1:
+        tot_domains = 25
+    max_N = int(tot_domains*params['test_split'])
+    if params['N'] > max_N:
+        raise Exception('Not enough test domains for this N and this dataset')
+
+    dataloader = PushingDataset(params)
 
     main(params, dataloader, device)
 

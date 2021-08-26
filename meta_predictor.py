@@ -5,8 +5,16 @@ import torch.nn.functional as F
 
 
 class MamlParams(nn.Module):
-    def __init__(self, n_actions, n_neurons, n_layers, subset, dlo_only, lr):
+    def __init__(self, params, lr):
         super(MamlParams, self).__init__()
+
+        n_actions = params['t_steps']
+        n_neurons = params['n_neurons']
+        n_layers = params['n_layers']
+        subset = params['subset']
+        dlo_only = params['dlo_only']
+        obj_only = params['obj_only']
+        obj_input = params['obj_input']
 
         if subset == 0:
             in_dim = 117
@@ -15,8 +23,13 @@ class MamlParams(nn.Module):
 
         if dlo_only == 1:
             out_dim = 32*2
+            if obj_input == 0:
+                in_dim = 66
         else:
-            out_dim = 78
+            if obj_only == 1:
+                out_dim = 3 * 2
+            else:
+                out_dim = 78
 
         self.n_layers = n_layers
 
@@ -87,6 +100,8 @@ class maml(nn.Module):
 
         self.inner_lr = 1.0
         self.dlo_only = params['dlo_only']
+        self.obj_only = params['obj_only']
+        self.obj_input = params['obj_input']
         self.adapt_lr = params['learned_lr']
 
         # TODO: ???
@@ -94,7 +109,7 @@ class maml(nn.Module):
 
 
 
-        self.model_theta = MamlParams(params['t_steps'], params['n_neurons'], params['n_layers'], params['subset'], params['dlo_only'], self.inner_lr)
+        self.model_theta = MamlParams(params, self.inner_lr)
 
         self.log_grads_idx = 0
         self.grads_vals = np.zeros(len(self.model_theta.get_theta()))
@@ -126,7 +141,7 @@ class maml(nn.Module):
 
         err = (y - y_hat)**2
 
-        if self.dlo_only == 1:
+        if self.dlo_only == 1 or self.obj_only == 1:
             return torch.mean(err), None
         else:
             push_err = torch.mean(err[:, :2]).detach().cpu().item()
