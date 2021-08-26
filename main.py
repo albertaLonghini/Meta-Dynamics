@@ -17,20 +17,22 @@ parser.add_argument('--learned_lr', default=1, type=int, help="0:constant inner 
 
 parser.add_argument('--t_steps', default=2, type=int, help="predict t steps in the future")
 parser.add_argument('--n_neurons', default=32, type=int, help="number of neurons in hidden layers")
-parser.add_argument('--n_layers', default=0, type=int, help="0: 4 hidden layers, 1: 6 hidden layers")
+parser.add_argument('--n_layers', default=1, type=int, help="0: 4 hidden layers, 1: 6 hidden layers")
+
+parser.add_argument('--displacement', default=0, type=int, help="0: position predicted, 1: displacement predicted")
 
 parser.add_argument('--subset', default=1, type=int, help="0: use full dataset, 1: use all objects domains")
 
-parser.add_argument('--dlo_only', default=0, type=int, help="0: predict all the objects, 1: predict only deformable linear object")
-parser.add_argument('--obj_only', default=1, type=int, help="0: predict all the objects, 1: predict only rigid objects")
+parser.add_argument('--dlo_only', default=1, type=int, help="0: predict all the objects, 1: predict only deformable linear object")
+parser.add_argument('--obj_only', default=0, type=int, help="0: predict all the objects, 1: predict only rigid objects")
 parser.add_argument('--obj_input', default=0, type=int, help='0: remove obj form input when prediction is dlo:1 and restrict to 0 objects')
 
 parser.add_argument('--epochs', default=200000, type=int, help="number of epochs")
-parser.add_argument('--N', default=5, type=int, help="number of tasks per batch")
-parser.add_argument('--K', default=100, type=int, help="number of adapatation trajectories per task")
+parser.add_argument('--N', default=20, type=int, help="number of tasks per batch")
+parser.add_argument('--K', default=10, type=int, help="number of adapatation trajectories per task")
 parser.add_argument('--test_split', default=0.2, type=float, help="ratio of test data")
 parser.add_argument('--seed', default=1234, type=int, help="seed")
-parser.add_argument('--lr', default=0.001, type=float, help="learning rate")
+parser.add_argument('--lr', default=0.0001, type=float, help="learning rate")
 parser.add_argument('--epochs_test', default=10, type=int, help="number of epochs before testing")
 
 
@@ -55,7 +57,7 @@ def main(params, dataloader, device):
     # log_name += '_K=' + str(params['K'])
     # log_name += '_lr=' + str(params['lr'])
     # log_name += '_split=' + str(params['test_split'])
-    log_name += 'CPU_TEST_Data1_smaller_subset_none_maml_LR=0.001_NN=32_layer=0_N=5_K=100_OBJ'
+    log_name += 'DISPLACEMENT_Data1_smaller_subset_YESmaml'
 
     # log_name = './debug'
     writer = SummaryWriter(log_dir=log_name)
@@ -133,7 +135,7 @@ def main(params, dataloader, device):
                 model.grads_vals *= 0
                 model.log_grads_idx += 1
 
-            if params['dlo_only'] == 0:
+            if params['dlo_only'] == 0 and params['obj_only'] == 0:
                 for log_idx, name in enumerate(['push_err', 'dlo_err', 'obj_pos_err', 'obj_or_err']):
                     writer.add_scalar(name + "_train", train_errs[log_idx] / (params['N'] * params['epochs_test']), int(epoch / params['epochs_test']))
                     writer.add_scalar(name + "_test", test_errs[log_idx] / (params['N']), int(epoch / params['epochs_test']))
@@ -207,7 +209,7 @@ if __name__ == '__main__':
     torch.manual_seed(seed)
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cpu')
+    # device = torch.device('cpu')
 
     if params['dlo_only'] == params['obj_only']:
         raise Exception('Cannot predict jus objects and just rope at the same time man...')

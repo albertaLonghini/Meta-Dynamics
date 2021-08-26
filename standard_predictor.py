@@ -83,12 +83,27 @@ class regressor(nn.Module):
 
         self.dlo_only = params['dlo_only']
         self.obj_only = params['obj_only']
+        self.obj_input = params['obj_input']
+        self.displacement = params['displacement']
 
         self.model_theta = Network(params)
 
     def get_loss(self, x, a, y):
 
         y_hat = self.model_theta.forward(x, a)
+
+        # predic displacement istead of final position
+        if self.displacement == 1:
+            if self.dlo_only == 0 and self.obj_only == 0:
+                y_hat = y_hat + x
+            else:
+                if self.dlo_only == 1:
+                    if self.obj_input == 0:
+                        y_hat = y_hat + x[:, 2:]
+                    else:
+                        y_hat = y_hat + x[:, 2:-6]
+                else:
+                    y_hat = y_hat + x[:, 66:-6]
 
         err = (y - y_hat) ** 2
 
